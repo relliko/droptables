@@ -11,14 +11,16 @@
 * and equipment the way the server does it; /dt th sets it by hand.
 *
 * The frame can stay up (/dt show always), fade out a few seconds after you target a mob
-* (/dt show fade), or only show while you hold a key (/dt show hold, /dt key).
+* (/dt show fade), or only show while you hold a key (/dt show hold, /dt key). The - at the end of
+* its first line minimizes it to an icon in the tray at the bottom right (tray.lua); click that to
+* bring it back.
 *
 * Nothing is ever sent to the server: droptables only reads client memory and incoming packets.
 --]]
 
 addon.name    = 'droptables';
 addon.author  = 'Relli';
-addon.version = '0.1';
+addon.version = '0.2';
 addon.desc    = 'Era loot table, drop rates by treasure hunter level, and kill counts for your target.';
 addon.link    = 'https://github.com/relliko/droptables';
 
@@ -29,6 +31,7 @@ local settings = require('settings');
 local loot     = require('loot');
 local kills    = require('kills');
 local keys     = require('keys');
+local tray     = require('tray');
 
 local defaults = T{
     visible  = true,
@@ -38,6 +41,7 @@ local defaults = T{
     fade     = 6,
     key      = 'shift',  -- keys.VK name
     lifetime = T{ },   -- kills and drops (kills.lua)
+    minimized = false, -- shown as an icon at the bottom right (tray.lua) instead
 };
 
 local dt = {
@@ -48,6 +52,19 @@ local dt = {
     shown_id  = nil,   -- the mob the frame is showing, and when it last started (or was kept) showing
     shown_at  = 0,
     hovered   = false, -- the mouse was over the frame last frame
+    minimize  = false, -- its - was clicked
+};
+
+-- The minimized frame's icon: a treasure chest.
+local ICON = {
+    tip = 'droptables: click to open',
+    panel = 0xEB1F1A17, edge = 0xC8595E5E, hot_panel = 0xEB2A2C2C, hot_edge = 0xC840B4E8,
+    glyph = function (dl, x, y, w, h)
+        local cx, hw = x + w / 2, h * 0.42;
+        dl:AddRectFilled({ cx - hw, y + h * 0.2 }, { cx + hw, y + h * 0.42 }, 0xFF60C8F0);
+        dl:AddRectFilled({ cx - hw, y + h * 0.46 }, { cx + hw, y + h * 0.8 }, 0xFF40A0D8);
+        dl:AddRectFilled({ cx - h * 0.07, y + h * 0.36 }, { cx + h * 0.07, y + h * 0.56 }, 0xFF1F1A17);
+    end,
 };
 
 local SAVE_EVERY = 30;
@@ -247,6 +264,23 @@ local function draw()
         imgui.SameLine();
         imgui.TextColored(DIM, ('%d kills (%d total)'):fmt(session_kills, lifetime_kills));
 
+        -- The - that minimizes the frame, at the right end of this line.
+        local fs = imgui.GetFontSize();
+        imgui.SameLine();
+        imgui.SetCursorPosX(math.max(imgui.GetCursorPosX(), imgui.GetWindowWidth() - 8 - fs));
+        local bx, by = imgui.GetCursorScreenPos();
+        if (imgui.InvisibleButton('##dt_minimize', { fs, fs })) then
+            dt.minimize = true;
+        end
+        local hot = imgui.IsItemHovered();
+        local dl = imgui.GetWindowDrawList();
+        if (hot) then
+            dl:AddRectFilled({ bx, by }, { bx + fs, by + fs }, math.floor(0x50 * alpha) * 0x1000000 + 0xFFFFFF, 3);
+            imgui.SetTooltip('Minimize to an icon at the bottom right (/dt min)');
+        end
+        local e, cy = fs * 0.5 * 0.7071 - 1, by + fs / 2;
+        dl:AddLine({ bx + fs / 2 - e, cy }, { bx + fs / 2 + e, cy }, math.floor((hot and 0xFF or 0xB0) * alpha) * 0x1000000 + 0xFFFFFF, 1.5);
+
         if (tpl == nil) then
             imgui.TextColored(DIM, 'No era loot data');
         else
@@ -333,6 +367,7 @@ end
 
 local function help()
     msg('/droptables (or /dt) on|off   show the target frame');
+    msg('/dt min   minimize the frame to an icon at the bottom right (so does its -); click the icon, or /dt on, to bring it back');
     msg('/dt th auto|0-8   your treasure hunter level (auto works it out from job, level and gear)');
     msg('/dt fade [seconds]   fade the frame out that long after you target a mob (6 s to start with)');
     msg('/dt show hold   show it only while you hold /dt key <key> (shift); /dt show always to keep it up');
@@ -394,6 +429,7 @@ ashita.events.register('load', 'droptables_load', function ()
         return mob and (mob.t:gsub('_', ' ')) or nil;
     end
     dt.last_save = kills.now();
+    tray.init('droptables');
     if (not loot.init(addon.path)) then
         err(('No loot data (%s). Run tools/gen_loot.py.'):fmt(tostring(loot.error)));
     end
@@ -407,6 +443,7 @@ settings.register('settings', 'droptables_settings_update', function (s)
 end);
 
 ashita.events.register('unload', 'droptables_unload', function ()
+    tray.hide('droptables');
     save();
 end);
 
@@ -427,9 +464,13 @@ ashita.events.register('command', 'droptables_command', function (e)
     local s = dt.settings;
     local what, value = (args[2] or ''):lower(), (args[3] or ''):lower();
     if (what == 'on' or what == 'off') then
-        s.visible = what == 'on';
+        s.visible, s.minimized = what == 'on', false;
         save();
         msg(('Target frame %s.'):fmt(s.visible and 'on' or 'off'));
+    elseif (what == 'min') then
+        s.visible, s.minimized = true, true;
+        save();
+        msg('Target frame minimized to an icon at the bottom right; click it, or /dt on, to bring it back.');
     elseif (what == 'th') then
         local n = tonumber(value);
         if (value == 'auto') then
@@ -489,7 +530,20 @@ ashita.events.register('command', 'droptables_command', function (e)
 end);
 
 ashita.events.register('d3d_present', 'droptables_present', function ()
-    draw();
+    local s = dt.settings;
+    if (s ~= nil and s.visible and s.minimized) then
+        if (tray.icon('droptables', ICON)) then
+            s.minimized = false;
+            save();
+        end
+    else
+        tray.hide('droptables');
+        draw();
+        if (dt.minimize) then
+            dt.minimize, s.minimized = false, true;
+            save();
+        end
+    end
     -- Save a dragged spot once you let go, and new counts every so often.
     local t = kills.now();
     if ((dt.moved and not imgui.IsMouseDown(ImGuiMouseButton_Left)) or (kills.dirty and t - dt.last_save >= SAVE_EVERY)) then

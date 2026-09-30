@@ -14,11 +14,12 @@ Nothing is ever sent to the server: droptables only reads client memory and inco
 - Type `/addon load droptables` in game.
 
 ## Usage
-Target a mob to see its frame. Drag the frame to move it.
+Target a mob to see its frame. Drag the frame to move it. The `-` at the end of its first line minimizes it to a small chest icon at the bottom right of the screen, in one row with the minimized windows of allrecipes, deeps and scouter; click the icon (or `/dt on`) to bring it back.
 
 | Command | |
 |---|---|
 | `/dt on\|off` | show or hide the frame (`/droptables` works too) |
+| `/dt min` | minimize the frame to its icon |
 | `/dt th auto\|0-8` | your treasure hunter level; `auto` works it out from job, level and gear |
 | `/dt fade [seconds]` | fade the frame out that long after you target a mob (6 s by default) |
 | `/dt show always\|fade\|hold` | keep it up, fade it out, or show it only while you hold a key |
