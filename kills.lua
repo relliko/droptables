@@ -12,6 +12,12 @@
 * Kills and drops are counted by mob name within a zone: for this session in memory, and for your
 * lifetime in your character's settings (lifetime[zone][name] = { n = kills, d = { [item] = n } },
 * numbers kept as string keys for the settings file).
+*
+* Seals (Beastmen's, Kindred's, and the crests) are also kept on their own: when the last one came
+* into your pool (the real time, os.time, so it lasts through a reload or a relog), from what, and
+* how many kills there have been since. On Phoenix they don't come from a mob's loot table but from
+* a roll on every kill, and once one drops for your party no other can for 5 minutes
+* (mob_entity.cpp, DropItems).
 --]]
 
 require('common');
@@ -25,7 +31,14 @@ local kills = {
     now      = os.clock,
     zone     = function () return AshitaCore:GetMemoryManager():GetParty():GetMemberZone(0); end,
     namer    = nil,   -- fallback name for a mob id the client no longer knows (set by droptables.lua)
+    seal     = nil,   -- the settings table: { at = os.time of the last, item, mob, zone, kills = since, n = seen }
+    seals_session = 0,
+    clock    = os.time,
 };
+
+-- Beastmen's Seal, Kindred's Seal, Kindred's Crest, High and Sacred Kindred's Crest.
+kills.SEALS = { [1126] = true, [1127] = true, [2955] = true, [2956] = true, [2957] = true };
+kills.SEAL_WAIT = 300;   -- seconds after a seal before your party can get another (SPECIAL_DROP_COOLDOWN)
 
 local DEFEATS, FALLS = 6, 20;
 local REPEAT = 10;    -- seconds: another death message for the same mob in this time is the same kill
@@ -76,6 +89,9 @@ local function add(zone, name, kill, item)
     local s, l = record(kills.session, zone, name), record(kills.lifetime, tostring(zone), name);
     if (kill) then
         s.n, l.n = s.n + 1, l.n + 1;
+        if (kills.seal ~= nil) then
+            kills.seal.kills = (kills.seal.kills or 0) + 1;
+        end
     end
     if (item ~= nil) then
         s.d[item] = (s.d[item] or 0) + 1;
@@ -138,13 +154,21 @@ function kills.on_packet(id, data)
         end
         kills.pool[slot] = { key = key, t = t };
         local k = kills.recent[dropper];
+        local zone, name;
         if (k ~= nil and t - k.t < DROPS) then
-            add(k.zone, k.name, false, item);
-            return;
+            zone, name = k.zone, k.name;
+        else
+            zone, name = kills.zone(), mob_name(dropper, u16(data, 0x12));
         end
-        local name = mob_name(dropper, u16(data, 0x12));
         if (name ~= nil) then
-            add(kills.zone(), name, false, item);
+            add(zone, name, false, item);
+        end
+        if (kills.SEALS[item] and kills.seal ~= nil) then
+            local seal = kills.seal;
+            seal.at, seal.item, seal.mob, seal.zone = kills.clock(), item, name or '', zone;
+            seal.kills, seal.n = 0, (seal.n or 0) + 1;
+            kills.seals_session = kills.seals_session + 1;
+            kills.dirty = true;
         end
     end
 end
@@ -159,7 +183,23 @@ function kills.get(zone, name)
 end
 
 function kills.reset_session()
-    kills.session, kills.recent, kills.pool = { }, { }, { };
+    kills.session, kills.recent, kills.pool, kills.seals_session = { }, { }, { }, 0;
+end
+
+--[[
+* The seal timer: seconds since the last seal (nil when none has been seen), the seconds left
+* before your party can get another (0 once it can), and the kills since.
+--]]
+function kills.seal_state()
+    local seal = kills.seal;
+    if (seal == nil) then
+        return nil, 0, 0;
+    end
+    if ((seal.at or 0) <= 0) then
+        return nil, 0, seal.kills or 0;
+    end
+    local ago = math.max(0, kills.clock() - seal.at);
+    return ago, math.max(0, kills.SEAL_WAIT - ago), seal.kills or 0;
 end
 
 -- Kills older than DROPS can't get drops any more.

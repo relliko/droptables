@@ -15,12 +15,15 @@
 * its first line minimizes it to an icon in the tray at the bottom right (tray.lua); click that to
 * bring it back.
 *
+* Its last line is a seal timer: how long since a seal last came into your pool, how many kills
+* since, and whether one can drop yet (Phoenix allows a party one every 5 minutes); /dt seals.
+*
 * Nothing is ever sent to the server: droptables only reads client memory and incoming packets.
 --]]
 
 addon.name    = 'droptables';
 addon.author  = 'Relli';
-addon.version = '0.2';
+addon.version = '0.3';
 addon.desc    = 'Era loot table, drop rates by treasure hunter level, and kill counts for your target.';
 addon.link    = 'https://github.com/relliko/droptables';
 
@@ -42,6 +45,8 @@ local defaults = T{
     key      = 'shift',  -- keys.VK name
     lifetime = T{ },   -- kills and drops (kills.lua)
     minimized = false, -- shown as an icon at the bottom right (tray.lua) instead
+    seals    = true,   -- the seal timer line
+    seal     = T{ at = 0, item = 0, mob = '', zone = 0, kills = 0, n = 0 },  -- the last seal (kills.lua)
 };
 
 local dt = {
@@ -137,6 +142,7 @@ local function target_mob()
 end
 
 local WHITE, GOLD, DIM, RED = { 0.95, 0.94, 0.91, 1 }, { 1.0, 0.82, 0.35, 1 }, { 0.67, 0.66, 0.63, 1 }, { 0.93, 0.45, 0.42, 1 };
+local GREEN = { 0.45, 0.82, 0.49, 1 };
 local YOU_BG = 0x33 * 0x1000000 + 0x59 * 0x10000 + 0xD1 * 0x100 + 0xFF; -- gold wash behind your TH column (0xAABBGGRR)
 
 local function cell(text, color)
@@ -195,6 +201,63 @@ local function header_row(labels, you_col, why)
                 imgui.SetTooltip(('Your treasure hunter (%s)'):fmt(why));
             end
         end
+    end
+end
+
+-- 45 -> '45s', 252 -> '4m 12s', 7500 -> '2h 05m', 280000 -> '3d 5h'.
+local function span(sec)
+    sec = math.floor(sec);
+    if (sec < 60) then
+        return ('%ds'):fmt(sec);
+    elseif (sec < 3600) then
+        return ('%dm %02ds'):fmt(math.floor(sec / 60), sec % 60);
+    elseif (sec < 86400) then
+        return ('%dh %02dm'):fmt(math.floor(sec / 3600), math.floor(sec / 60) % 60);
+    end
+    return ('%dd %dh'):fmt(math.floor(sec / 86400), math.floor(sec / 3600) % 24);
+end
+
+-- What the seal timer knows, as lines (the line's tooltip, and /dt seals).
+local function seal_lines()
+    local seal = dt.settings.seal;
+    local ago, wait, since = kills.seal_state();
+    local lines = { };
+    if (ago == nil) then
+        lines[1] = ('No seal seen yet (%d kill%s so far).'):fmt(since, since == 1 and '' or 's');
+    else
+        lines[1] = ('Last seal: %s%s, %s ago; %d kill%s since.'):fmt(item_name(seal.item),
+            (seal.mob or '') ~= '' and (' from %s'):fmt(seal.mob) or '', span(ago), since, since == 1 and '' or 's');
+        lines[2] = wait > 0 and ('No seal can drop for your party for another %d:%02d.'):fmt(math.floor(wait / 60), wait % 60)
+            or 'Seals can drop again.';
+    end
+    lines[#lines + 1] = ('Seals seen: %d this session, %d in all.'):fmt(kills.seals_session, seal.n or 0);
+    lines[#lines + 1] = 'On Phoenix a kill has a 20% chance of a seal, but after one drops your party gets no other for 5 minutes.';
+    lines[#lines + 1] = 'None from NMs, or from mobs too weak to give experience. Under level 50 they give Beastmen\'s Seals; from 50, Beastmen\'s or Kindred\'s.';
+    return lines;
+end
+
+--[[
+* The seal timer line: since the last seal, the kills since, and whether one can drop yet.
+--]]
+local function seal_line(nm)
+    local ago, wait, since = kills.seal_state();
+    local hovered = false;
+    if (ago == nil) then
+        imgui.TextColored(DIM, 'No seal seen yet');
+    else
+        imgui.TextColored(DIM, ('Last seal %s ago, %d kill%s since'):fmt(span(ago), since, since == 1 and '' or 's'));
+    end
+    hovered = imgui.IsItemHovered();
+    imgui.SameLine();
+    if (nm) then
+        imgui.TextColored(RED, 'not from NMs');
+    elseif (wait > 0) then
+        imgui.TextColored(GOLD, ('none for %d:%02d'):fmt(math.floor(wait / 60), wait % 60));
+    else
+        imgui.TextColored(GREEN, 'can drop');
+    end
+    if (hovered or imgui.IsItemHovered()) then
+        imgui.SetTooltip(table.concat(seal_lines(), '\n'));
     end
 end
 
@@ -353,6 +416,9 @@ local function draw()
                 imgui.TextColored(DIM, 'Also seen: ' .. table.concat(extra, ', '));
             end
         end
+        if (s.seals ~= false) then
+            seal_line(tpl ~= nil and tpl.nm);
+        end
 
         local x, y = imgui.GetWindowPos();
         if (math.abs(x - s.x) > 0.5 or math.abs(y - s.y) > 0.5) then
@@ -369,9 +435,11 @@ local function help()
     msg('/droptables (or /dt) on|off   show the target frame');
     msg('/dt min   minimize the frame to an icon at the bottom right (so does its -); click the icon, or /dt on, to bring it back');
     msg('/dt th auto|0-8   your treasure hunter level (auto works it out from job, level and gear)');
-    msg('/dt fade [seconds]   fade the frame out that long after you target a mob (6 s to start with)');
-    msg('/dt show hold   show it only while you hold /dt key <key> (shift); /dt show always to keep it up');
+    msg('/dt show always|fade|hold   keep the frame up (always), fade it out after you target a mob, or show it only while you hold a key');
+    msg('/dt fade [seconds]   fade it out that long after you target a mob (6 s to start with)');
+    msg('/dt key <key>   the key for hold (shift to start with; ctrl, alt, a-z, 0-9, f1-f12)');
     msg('/dt kills   kills in this zone, this session and lifetime');
+    msg('/dt seals [on|off]   the seal timer: since the last seal, kills since, and whether one can drop yet (on|off: its line in the frame)');
     msg('/dt reset session   clear this session\'s counts; /dt reset moves the frame back');
     msg('/dt debug   what the frame knows about your target');
     msg('Your treasure hunter column has the gold header.');
@@ -423,6 +491,7 @@ end
 ashita.events.register('load', 'droptables_load', function ()
     dt.settings = settings.load(defaults);
     kills.lifetime = dt.settings.lifetime;
+    kills.seal = dt.settings.seal;
     kills.reset_session();
     kills.namer = function (mid)
         local mob = loot.mob(mid);
@@ -439,6 +508,7 @@ settings.register('settings', 'droptables_settings_update', function (s)
     if (s ~= nil) then
         dt.settings = s;
         kills.lifetime = s.lifetime;
+        kills.seal = s.seal;
     end
 end);
 
@@ -515,6 +585,18 @@ ashita.events.register('command', 'droptables_command', function (e)
         msg(describe_show());
     elseif (what == 'kills') then
         print_kills();
+    elseif (what == 'seals' or what == 'seal') then
+        if (value == 'on' or value == 'off') then
+            s.seals = value == 'on';
+            save();
+            msg(('Seal timer line %s.'):fmt(s.seals and 'on' or 'off'));
+        elseif (value ~= '') then
+            err('Use /dt seals, or /dt seals on or off.');
+        else
+            for _, line in ipairs(seal_lines()) do
+                msg(line);
+            end
+        end
     elseif (what == 'reset' and value == 'session') then
         kills.reset_session();
         msg('This session\'s kill and drop counts are cleared.');
