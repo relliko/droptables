@@ -22,7 +22,7 @@
 --]]
 
 addon.name    = 'droptables';
-addon.author  = 'relli';
+addon.author  = 'Relli';
 addon.version = '0.3';
 addon.desc    = 'Era loot table, drop rates by treasure hunter level, and kill counts for your target.';
 addon.link    = 'https://github.com/relliko/droptables';
