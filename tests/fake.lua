@@ -8,6 +8,11 @@ fake = {
     drawn    = { },  -- text drawn this frame, in order
     tips     = { },  -- tooltips set this frame
     hover    = false, -- what IsItemHovered answers
+    click    = false, -- what IsItemClicked answers
+    press    = nil,   -- the id of the InvisibleButton that reports a click
+    wrapping = 0,     -- PushTextWrapPos depth
+    colored_wrapping = 0, -- TextColored calls made while a wrap edge was set
+    item_names = { [637] = 'Slime Oil', [656] = 'Beastcoin', [16656] = 'Orcish Axe' }, -- others are 'Item<id>'
     target   = { index = 5, id = 0, name = '' },
 };
 
@@ -34,7 +39,8 @@ local memory = obj({
     GetParty = function () return obj({ }); end,
 });
 local resources = obj({
-    GetItemById = function (_, id) return { Name = { 'Item' .. id } }; end,
+    GetItemById = function (_, id) return { Name = { fake.item_names[id] or ('Item' .. id) } }; end,
+    GetString = function (_, table, id) return table == 'zones.names' and ('Zone' .. id) or ''; end,
     GetSpellById = function (_, id) return { Name = { 'Spell' .. id } }; end,
 });
 AshitaCore = obj({
@@ -55,12 +61,21 @@ local imgui = obj({
     Begin = function () return true; end,
     BeginTable = function () return true; end,
     Text = function (t) record(t); end,
-    TextColored = function (_, t) record(t); end,
+    TextColored = function (_, t)
+        record(t);
+        if (fake.wrapping > 0) then fake.colored_wrapping = fake.colored_wrapping + 1; end
+    end,
     TextWrapped = function (t) record(t); end,
     SetTooltip = function (t) fake.tips[#fake.tips + 1] = t; end,
     IsItemHovered = function () return fake.hover; end,
+    IsItemClicked = function () return fake.click; end,
+    PushTextWrapPos = function () fake.wrapping = fake.wrapping + 1; end,
+    PopTextWrapPos = function () fake.wrapping = fake.wrapping - 1; end,
+    InputText = function () return false; end,
+    Selectable = function (t) record(t); return false; end,
+    BeginChild = function () return true; end,
     IsWindowHovered = function () return false; end,
-    InvisibleButton = function () return false; end,
+    InvisibleButton = function (id) return id == fake.press; end,
     IsMouseDown = function () return false; end,
     GetCursorScreenPos = function () return 100, 100; end,
     GetCursorPosX = function () return 8; end,

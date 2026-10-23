@@ -27,8 +27,8 @@
 
 addon.name    = 'droptables';
 addon.author  = 'Relli';
-addon.version = '0.4';
-addon.desc    = 'Era loot table, drop rates by treasure hunter level, kill counts, and how your target aggros and what it resists.';
+addon.version = '0.5';
+addon.desc    = 'Era loot table, drop rates by treasure hunter level, kill counts, how your target aggros and what it resists, and an item search.';
 addon.link    = 'https://github.com/relliko/droptables';
 
 require('common');
@@ -37,6 +37,7 @@ local imgui    = require('imgui');
 local settings = require('settings');
 local loot     = require('loot');
 local info     = require('info');
+local search   = require('search');
 local kills    = require('kills');
 local keys     = require('keys');
 local tray     = require('tray');
@@ -163,6 +164,12 @@ end
 local function item_row(label, id, chances, you_col, seen, price, color)
     imgui.TableNextRow();
     cell(label, color);
+    if (id ~= 0 and imgui.IsItemHovered()) then
+        imgui.SetTooltip('Click: every mob that drops it, and that it can be stolen from');
+    end
+    if (id ~= 0 and imgui.IsItemClicked()) then
+        search.show(item_name(id), id);
+    end
     for c, p in ipairs(chances) do
         cell(pct(p), c == you_col and GOLD or nil);
         if (c == you_col) then
@@ -355,9 +362,24 @@ local function rank_line(label, keys, labels, ranks)
     end
     if (mode ~= 0 or parts == 0) then
         imgui.SameLine();
-        imgui.TextColored(rank_color(mode), parts == 0 and (mode == 0 and 'none' or ('all ' .. signed(mode))) or ('rest ' .. signed(mode)));
+        imgui.TextColored(rank_color(mode), parts == 0 and (mode == 0 and 'none' or ('all ' .. signed(mode))) or ('· rest ' .. signed(mode)));
         if (imgui.IsItemHovered()) then imgui.SetTooltip(RANK_TIP); end
     end
+end
+
+local WRAP = 300; -- pixels: the narrowest the details' long lines wrap at
+
+--[[
+* Text that wraps at the frame's right edge (usually set by the loot table), or WRAP pixels from
+* its left when the frame is narrower. Only these lines wrap: a wrap edge left of where SameLine
+* text starts makes ImGui break it after every letter.
+--]]
+local function wrapped(text, color)
+    imgui.PushTextWrapPos(math.max(imgui.GetWindowWidth() - 8, 8 + WRAP));
+    if (color ~= nil) then imgui.PushStyleColor(ImGuiCol_Text, color); end
+    imgui.TextWrapped(text);
+    if (color ~= nil) then imgui.PopStyleColor(1); end
+    imgui.PopTextWrapPos();
 end
 
 local LIST_MAX = 5; -- TP moves or spells shown before '+N more' (all of them in its tooltip)
@@ -366,16 +388,15 @@ local function list_line(label, items)
     imgui.TextColored(DIM, label);
     imgui.SameLine();
     if (#items <= LIST_MAX) then
-        imgui.TextWrapped(table.concat(items, ', '));
+        wrapped(table.concat(items, ', '));
         return;
     end
     local shown = { };
     for i = 1, LIST_MAX do shown[i] = items[i]; end
-    imgui.TextWrapped(('%s +%d more'):fmt(table.concat(shown, ', '), #items - LIST_MAX));
+    wrapped(('%s +%d more'):fmt(table.concat(shown, ', '), #items - LIST_MAX));
     if (imgui.IsItemHovered()) then imgui.SetTooltip(table.concat(items, '\n')); end
 end
 
-local WRAP = 300; -- pixels, for the details' long lines
 local ELEMENT_SHORT = { fire = 'fire', ice = 'ice', wind = 'wind', earth = 'earth', thunder = 'thunder', water = 'water', light = 'light', dark = 'dark' };
 
 --[[
@@ -383,8 +404,6 @@ local ELEMENT_SHORT = { fire = 'fire', ice = 'ice', wind = 'wind', earth = 'eart
 * spells, and the rest. How it detects you is in the aggro tag's tooltip.
 --]]
 local function details(t, spawn)
-    imgui.PushTextWrapPos(imgui.GetCursorPosX() + WRAP);
-
     -- Damage taken, grouped by percentage: 'takes 50% slash, pierce · 25% blunt, h2h'.
     local groups, order = { }, { };
     for _, p in ipairs(info.PHYSICAL) do
@@ -404,7 +423,7 @@ local function details(t, spawn)
     if (#parts > 0) then
         imgui.TextColored(DIM, 'Takes');
         imgui.SameLine();
-        imgui.TextWrapped(table.concat(parts, ' · '));
+        wrapped(table.concat(parts, ' · '));
     end
 
     rank_line('Elements', info.ELEMENTS, ELEMENT_SHORT, t.el or { });
@@ -414,9 +433,7 @@ local function details(t, spawn)
         for _, s in ipairs(t.immune) do immune[#immune + 1] = (info.STATUS_LABELS[s] or s:gsub('_', ' ')); end
         imgui.TextColored(DIM, 'Immune');
         imgui.SameLine();
-        imgui.PushStyleColor(ImGuiCol_Text, GOLD);
-        imgui.TextWrapped(table.concat(immune, ', '));
-        imgui.PopStyleColor(1);
+        wrapped(table.concat(immune, ', '), GOLD);
     end
 
     local tp = { };
@@ -442,11 +459,10 @@ local function details(t, spawn)
     if (respawn > 0) then rest[#rest + 1] = info.duration(respawn) .. ' respawn'; end
     if (t.window ~= nil) then rest[#rest + 1] = ('spawns %d:00-%d:00'):fmt(t.window[1], t.window[2]); end
     if (t.script) then rest[#rest + 1] = 'script changes some'; end
-    imgui.TextColored(DIM, table.concat(rest, ' · '));
+    wrapped(table.concat(rest, ' · '), DIM);
     if (t.script and imgui.IsItemHovered()) then
         imgui.SetTooltip('Its script changes some of this when it spawns');
     end
-    imgui.PopTextWrapPos();
 end
 
 -- What the seal timer knows, as lines (the line's tooltip, and /dt seals).
@@ -561,16 +577,32 @@ local function draw()
         imgui.SameLine();
         imgui.TextColored(DIM, ('%d kills (%d total)'):fmt(session_kills, lifetime_kills));
 
-        -- The - that minimizes the frame, at the right end of this line.
+        -- At the right end of this line: a magnifying glass that opens the item search, and the -
+        -- that minimizes the frame.
         local fs = imgui.GetFontSize();
+        local dl = imgui.GetWindowDrawList();
         imgui.SameLine();
-        imgui.SetCursorPosX(math.max(imgui.GetCursorPosX(), imgui.GetWindowWidth() - 8 - fs));
+        imgui.SetCursorPosX(math.max(imgui.GetCursorPosX(), imgui.GetWindowWidth() - 8 - 2 * fs - 4));
+        local sx, sy = imgui.GetCursorScreenPos();
+        if (imgui.InvisibleButton('##dt_search', { fs, fs })) then
+            if (search.open[1]) then search.open[1] = false; else search.show(); end
+        end
+        local shot = imgui.IsItemHovered();
+        if (shot) then
+            dl:AddRectFilled({ sx, sy }, { sx + fs, sy + fs }, math.floor(0x50 * alpha) * 0x1000000 + 0xFFFFFF, 3);
+            imgui.SetTooltip('Find an item: the mobs that drop it and that it can be stolen from (/dt find)');
+        end
+        local scol = math.floor((shot and 0xFF or 0xB0) * alpha) * 0x1000000 + 0xFFFFFF;
+        local r = fs * 0.24;
+        dl:AddCircle({ sx + fs * 0.42, sy + fs * 0.42 }, r, scol, 12, 1.5);
+        dl:AddLine({ sx + fs * 0.42 + r * 0.72, sy + fs * 0.42 + r * 0.72 }, { sx + fs * 0.8, sy + fs * 0.8 }, scol, 1.5);
+
+        imgui.SameLine(0, 4);
         local bx, by = imgui.GetCursorScreenPos();
         if (imgui.InvisibleButton('##dt_minimize', { fs, fs })) then
             dt.minimize = true;
         end
         local hot = imgui.IsItemHovered();
-        local dl = imgui.GetWindowDrawList();
         if (hot) then
             dl:AddRectFilled({ bx, by }, { bx + fs, by + fs }, math.floor(0x50 * alpha) * 0x1000000 + 0xFFFFFF, 3);
             imgui.SetTooltip('Minimize to an icon at the bottom right (/dt min)');
@@ -681,6 +713,7 @@ local function help()
     msg('/dt fade [seconds]   fade it out that long after you target a mob (6 s to start with)');
     msg('/dt key <key>   the key for hold (shift to start with; ctrl, alt, a-z, 0-9, f1-f12)');
     msg('/dt info [on|off]   the details under the tag line: resists, TP moves, spells, respawn (so does the arrow at the end of that line)');
+    msg('/dt find [name]   find an item: every mob that drops it, highest chance at your TH first, and that it can be stolen from (or click an item in the frame)');
     msg('/dt kills   kills in this zone, this session and lifetime');
     msg('/dt seals [on|off]   the seal timer: since the last seal, kills since, and whether one can drop yet (on|off: its line in the frame)');
     msg('/dt reset session   clear this session\'s counts; /dt reset moves the frame back');
@@ -746,6 +779,7 @@ ashita.events.register('load', 'droptables_load', function ()
     dt.last_save = kills.now();
     tray.init('droptables');
     info.init(addon.path);
+    search.init(addon.path);
     if (not loot.init(addon.path)) then
         err(('No loot data (%s). Run tools/gen_loot.py.'):fmt(tostring(loot.error)));
     end
@@ -841,6 +875,12 @@ ashita.events.register('command', 'droptables_command', function (e)
         end
         save();
         msg(('Mob details %s.'):fmt(s.details and 'shown' or 'hidden'));
+    elseif (what == 'find' or what == 'search') then
+        local q = e.command:match('^%S+%s+%S+%s+(.-)%s*$');
+        search.show(q);
+        if (q ~= nil and q ~= '') then
+            search.focus = false;
+        end
     elseif (what == 'kills') then
         print_kills();
     elseif (what == 'seals' or what == 'seal') then
@@ -883,6 +923,10 @@ ashita.events.register('d3d_present', 'droptables_present', function ()
             dt.minimize, s.minimized = false, true;
             save();
         end
+    end
+    if (s ~= nil and loot.rules ~= nil) then
+        local th, why = your_th();
+        search.draw(th, why, { x = s.x + 40, y = s.y + 40 });
     end
     -- Save a dragged spot once you let go, and new counts every so often.
     local t = kills.now();

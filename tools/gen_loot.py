@@ -4,8 +4,10 @@ a LandSandBoat fork; the live server runs its `live` branch):
 
     data/loot/<zone id>.lua   mobs by server id, their loot templates, and NPC sell prices
     data/rules.lua            treasure hunter table, trait levels, gear, caps
+    data/info/<zone id>.lua   how each mob aggros, its resists, TP moves and spells (tools/mobinfo.py)
+    data/items.lua            for each item, the mobs that drop it and that it's stolen from (tools/items.py)
 
-    python tools/gen_loot.py [--phoenix C:\\code\\Phoenix] [--content rotz,cop,toau] [--report]
+    python tools/gen_loot.py [--phoenix C:\\code\\Phoenix] [--content rotz,cop,toau] [--ffxi <game folder>] [--report]
 
 How the server builds a mob's drops (read from Phoenix, which matches LandSandBoat here):
 - data/zones/<zone>/mobs.yaml: spawns[<server id>] = { template, level }, templates[<name>].loot =
@@ -40,6 +42,7 @@ from pathlib import Path
 
 import yaml
 
+import items as itemindex
 import mobinfo
 
 HERE = Path(__file__).resolve().parent
@@ -327,7 +330,7 @@ def phoenix_commit(root):
         return "unknown"
 
 
-def generate(root, out, content, report=False):
+def generate(root, out, content, report=False, ffxi=None, npcs_lua=None):
     entries = init_entries(root)
     by_name, price, sell_changes = read_items(root, entries)
     item = Resolver(by_name)
@@ -343,6 +346,7 @@ def generate(root, out, content, report=False):
     lists = mobinfo.Lists(root, module_sql(root, entries))
     info_scripted = mobinfo.scripted_changes(root)
     info_zones = info_mobs = 0
+    index, dat_names = itemindex.Index(), itemindex.DatNames(ffxi, npcs_lua)
     stats = {"zones": 0, "mobs": 0, "templates": 0, "scripted": [], "skipped_content": 0, "overlays": 0}
     for folder in sorted((root / "data" / "zones").iterdir()):
         if not (folder / "mobs.yaml").is_file() or folder.name.startswith("abyssea_"):
@@ -387,6 +391,7 @@ def generate(root, out, content, report=False):
             items.update(t["steal"])
         items.discard(0)
         write_zone(out / "loot" / ("%d.lua" % zone), zone, mobs, keep, {i: price.get(i, 0) for i in items}, header)
+        index.add_zone(zone, spawns, templates, keep, dat_names)
         stats["zones"] += 1
         stats["mobs"] += len(mobs)
         stats["templates"] += len(keep)
@@ -395,10 +400,13 @@ def generate(root, out, content, report=False):
     if item.missing:
         raise GenError("unknown items:\n  " + "\n  ".join(sorted(item.missing)))
     write_rules(out / "rules.lua", rules, header)
+    index.write(out / "items.lua", header, lua_value)
     print("wrote %d zones, %d mobs, %d loot templates (%d overlay files applied, %d spawns skipped for disabled content, "
           "%d sell price changes from module SQL)"
           % (stats["zones"], stats["mobs"], stats["templates"], stats["overlays"], stats["skipped_content"], sell_changes))
     print("mob info: %d zones, %d mobs" % (info_zones, info_mobs))
+    print("item index: %d dropped, %d stolen items; %d mob names from the game's DATs%s"
+          % (len(index.drops), len(index.steal), dat_names.used, "" if dat_names.files else " (no game files: names are tidied template keys)"))
     if report:
         print("templates with loot added by a script (%d): %s" % (len(stats["scripted"]), ", ".join(stats["scripted"])))
         print("TH gear items: %d; traits: %s; caps THF %d / other %d; multiplier %s" % (
@@ -411,10 +419,15 @@ def main(argv=None):
     ap.add_argument("--phoenix", type=Path, default=Path(r"C:\code\Phoenix"), help="Phoenix server checkout (live branch)")
     ap.add_argument("--out", type=Path, default=OUT)
     ap.add_argument("--content", default="rotz,cop,toau", help="expansions whose content is enabled")
+    ap.add_argument("--ffxi", type=Path, default=Path(r"C:\Games\PhoenixXI\SquareEnix\FINAL FANTASY XI"),
+                    help="the game's folder, for mob names (its ROM entity name DATs)")
+    ap.add_argument("--npcs", type=Path, default=HERE.parent.parent / "libs" / "ffxi" / "dats" / "npcs.lua",
+                    help="Ashita's libs/ffxi/dats/npcs.lua (which DAT holds each zone's names)")
     ap.add_argument("--report", action="store_true")
     args = ap.parse_args(argv)
     try:
-        generate(args.phoenix, args.out, {c.strip().lower() for c in args.content.split(",")}, args.report)
+        generate(args.phoenix, args.out, {c.strip().lower() for c in args.content.split(",")}, args.report,
+                 args.ffxi if args.ffxi.is_dir() else None, args.npcs)
     except GenError as e:
         print("error:", e)
         return 1

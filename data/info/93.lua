@@ -14,7 +14,7 @@ mobs = {
 [17158201]={t='Sapphire_Quadav_LITD',lv={60,60}},
 },
 templates = {
-['Sapphire_Quadav_LITD']={family='quadav',eco='beastmen',aggro=true,link=true,det={'hearing','scent'},element='water',jobs={'whm','whm'},el={ice=-2,wind=-2,earth=-2,thunder=-3,light=-2,dark=-2},st={paralyze=-2,bind=-2,silence=-2,slow=-2,light_sleep=-2,dark_sleep=-2,blind=-2,stun=-3,gravity=-2},tp={{'Ore Toss',0},{'Head Butt Quadav',0},{'Shell Bash',0},{'Shell Guard',0},{'Howl',1}},spells={{45,1,255},{50,1,255},{53,1,255},{55,1,255},{57,1,255}}},
-['Sapphirine_Quadav_LITD']={family='quadav',eco='beastmen',aggro=true,link=true,det={'hearing','scent'},element='water',jobs={'whm','whm'},el={ice=-2,wind=-2,earth=-2,thunder=-3,light=-2,dark=-2},st={paralyze=-2,bind=-2,silence=-2,slow=-2,light_sleep=-2,dark_sleep=-2,blind=-2,stun=-3,gravity=-2},tp={{'Ore Toss',0},{'Head Butt Quadav',0},{'Shell Bash',0},{'Shell Guard',0},{'Howl',1}},spells={{45,1,255},{50,1,255},{53,1,255},{55,1,255},{57,1,255}}},
+['Sapphire_Quadav_LITD']={family='quadav',eco='beastmen',aggro=true,link=true,det={'hearing','scent'},element='water',jobs={'whm','whm'},el={ice=-2,wind=-2,earth=-2,thunder=-3,light=-2,dark=-2},st={paralyze=-2,bind=-2,silence=-2,slow=-2,light_sleep=-2,dark_sleep=-2,blind=-2,stun=-3,gravity=-2},tp={{'Ore Toss',0},{'Head Butt',0},{'Shell Bash',0},{'Shell Guard',0},{'Howl',1}},spells={{45,1,255},{50,1,255},{53,1,255},{55,1,255},{57,1,255}}},
+['Sapphirine_Quadav_LITD']={family='quadav',eco='beastmen',aggro=true,link=true,det={'hearing','scent'},element='water',jobs={'whm','whm'},el={ice=-2,wind=-2,earth=-2,thunder=-3,light=-2,dark=-2},st={paralyze=-2,bind=-2,silence=-2,slow=-2,light_sleep=-2,dark_sleep=-2,blind=-2,stun=-3,gravity=-2},tp={{'Ore Toss',0},{'Head Butt',0},{'Shell Bash',0},{'Shell Guard',0},{'Howl',1}},spells={{45,1,255},{50,1,255},{53,1,255},{55,1,255},{57,1,255}}},
 },
 }

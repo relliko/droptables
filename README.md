@@ -9,10 +9,12 @@ An Ashita v4 addon for [PhoenixXI](https://github.com/phoenixffxi/Phoenix). It a
 - a **seal timer**: how long since a Beastmen's or Kindred's Seal last came into your treasure pool, how many kills since, and whether one can drop yet;
 - **how it aggros and what it resists**: one line of tags under its name (what it aggros by, Sneak or Invis to get past it, true sight, linking, the element it's weakest to, sleep immunity; hover the aggro tag for its ranges), and a few more lines you can open: damage taken by weapon type, element and status resistance ranks, immunities, TP moves, spells, family, element, charm and respawn.
 
+It also has an **item search** (`/dt find`, or click an item in the frame): every mob that drops an item, highest chance at your treasure hunter first, with zone and level, and every mob it can be stolen from.
+
 Nothing is ever sent to the server: droptables only reads client memory and incoming packets.
 
 ## Installation
-- Download `droptables<version>.zip` (e.g. `droptables0.4.zip`) from the [latest release](https://github.com/relliko/droptables/releases/latest) and extract it into your Ashita v4 directory (it contains `addons/droptables`).
+- Download `droptables<version>.zip` (e.g. `droptables0.5.zip`) from the [latest release](https://github.com/relliko/droptables/releases/latest) and extract it into your Ashita v4 directory (it contains `addons/droptables`).
 - Type `/addon load droptables` in game.
 
 ## Usage
@@ -27,6 +29,7 @@ Target a mob to see its frame. Drag the frame to move it. The `-` at the end of 
 | `/dt show always\|fade\|hold` | keep it up, fade it out, or show it only while you hold a key |
 | `/dt key <key>` | the key for `hold` (shift, ctrl, alt, a-z, 0-9, f1-f12) |
 | `/dt info [on\|off]` | show or hide the mob's details (so does the arrow at the end of its tag line) |
+| `/dt find [name]` | find an item: the mobs that drop it (highest chance first) and that it can be stolen from |
 | `/dt kills` | kills in this zone, this session and lifetime |
 | `/dt seals [on\|off]` | the seal timer in chat; `on\|off` shows or hides its line in the frame |
 | `/dt reset session` | clear this session's counts; `/dt reset` moves the frame back |

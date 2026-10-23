@@ -101,13 +101,19 @@ class Lists:
                 self.skills.pop(int(sid), None)
         self.by_spell_name = {n: i for i, n in sorted(self.spell_names.items(), reverse=True)}
 
-    def tp_moves(self, list_id):
+    def tp_moves(self, list_id, kinds=()):
+        """[(name, aoe)]. The server's names can end in the family or species they belong to
+        (baleful_gaze_cockatrice), a variant tag (_dynamis) or a number; those endings are left off."""
         out, seen = [], set()
+        drop = {"dynamis"} | {w for k in kinds for w in str(k).lower().split("_")}
         for _, sid in self.skill_lists.get(list_id or 0, []):
             if sid not in self.skills:
                 continue
             name, aoe = self.skills[sid]
-            label = " ".join(w.capitalize() for w in name.split("_"))
+            words = name.split("_")
+            while len(words) > 1 and (words[-1] in drop or words[-1].isdigit()):
+                words.pop()
+            label = " ".join(w.capitalize() for w in words)
             if label not in seen:
                 seen.add(label)
                 out.append((label, aoe))
@@ -180,7 +186,7 @@ def template_info(name, tpl, species, lists, lv, scripted):
     info["el"] = {k: int((res.get("rank_element") or {}).get(k) or 0) for k in ELEMENTS}
     info["st"] = {k: int((res.get("rank_status") or {}).get(k) or 0) for k in STATUSES}
     info["immune"] = names(res.get("immune_status"))
-    info["tp"] = lists.tp_moves(tpl.get("skill_list_id"))
+    info["tp"] = lists.tp_moves(tpl.get("skill_list_id"), (fam, tpl.get("species") or ""))
     info["spells"] = lists.spells(tpl, lv)
     return info
 
