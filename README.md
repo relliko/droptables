@@ -6,12 +6,13 @@ An Ashita v4 addon for [PhoenixXI](https://github.com/phoenixffxi/Phoenix). It a
 - what THF can **steal** from it;
 - what an **NPC shop pays** for each drop;
 - how many of that mob **you and your party have killed**, this session and in total, and the drops you actually got from those kills (with an observed rate next to the listed chance);
-- a **seal timer**: how long since a Beastmen's or Kindred's Seal last came into your treasure pool, how many kills since, and whether one can drop yet.
+- a **seal timer**: how long since a Beastmen's or Kindred's Seal last came into your treasure pool, how many kills since, and whether one can drop yet;
+- **how it aggros and what it resists**: one line of tags under its name (what it aggros by, Sneak or Invis to get past it, true sight, linking, the element it's weakest to, sleep immunity; hover the aggro tag for its ranges), and a few more lines you can open: damage taken by weapon type, element and status resistance ranks, immunities, TP moves, spells, family, element, charm and respawn.
 
 Nothing is ever sent to the server: droptables only reads client memory and incoming packets.
 
 ## Installation
-- Download `droptables0.1.zip` from the [latest release](https://github.com/relliko/droptables/releases/latest) and extract it into your Ashita v4 directory (it contains `addons/droptables`).
+- Download `droptables<version>.zip` (e.g. `droptables0.4.zip`) from the [latest release](https://github.com/relliko/droptables/releases/latest) and extract it into your Ashita v4 directory (it contains `addons/droptables`).
 - Type `/addon load droptables` in game.
 
 ## Usage
@@ -25,6 +26,7 @@ Target a mob to see its frame. Drag the frame to move it. The `-` at the end of 
 | `/dt fade [seconds]` | fade the frame out that long after you target a mob (6 s by default) |
 | `/dt show always\|fade\|hold` | keep it up, fade it out, or show it only while you hold a key |
 | `/dt key <key>` | the key for `hold` (shift, ctrl, alt, a-z, 0-9, f1-f12) |
+| `/dt info [on\|off]` | show or hide the mob's details (so does the arrow at the end of its tag line) |
 | `/dt kills` | kills in this zone, this session and lifetime |
 | `/dt seals [on\|off]` | the seal timer in chat; `on\|off` shows or hides its line in the frame |
 | `/dt reset session` | clear this session's counts; `/dt reset` moves the frame back |
@@ -52,6 +54,16 @@ The data in `data/` is generated from PhoenixXI's own server repository by `tool
 - Treasure hunter procs are disabled on PhoenixXI, so a mob's TH is the highest TH of anyone who acted on it (capped at 8 for a THF main, 4 otherwise).
 - Beastmen's seals, crystals and other drops added by the server's code aren't in the loot tables; drops you get that aren't listed show under "Also seen" (and seals in the seal timer).
 - The drop rate multiplier is Phoenix's default setting (1); the live server's own settings aren't public.
+- NPC prices include Phoenix's own price changes on top of the base item table.
+
+### Mob info
+The tags and details come from the same Phoenix data (`data/info/`, made by `tools/mobinfo.py`), merged the way the server builds a mob: ecosystem, family, species, then the zone's own template for that mob, then the spawn.
+
+- A mob aggros only a player it doesn't check Too Weak to, unless you rest near it (or it aggros at any level). It sees 15 yalms in front of it (Invisible stops it), hears 8 (Sneak stops it), and notices spells within 20; low HP (under 75%) and job abilities or weapon skills only within 20. True sight sees through both.
+- Damage taken is per weapon type: 50% means half damage. Resistance ranks run from -3 (easiest to land and to hurt with) up to 11; they scale the mob's magic evasion.
+- Spells are the ones its spell list gives at that mob's levels. A mob's script can change some of this when it spawns; the details say when it does.
+
+The rates are per kill. When a mob rolls the same item more than once (Jelly rolls Slime Oil three times: 15%, 10% and 10%), the frame shows the chance of at least one, which is higher than any single roll.
 
 To regenerate the data from a Phoenix checkout:
 ```

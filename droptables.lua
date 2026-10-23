@@ -15,6 +15,10 @@
 * its first line minimizes it to an icon in the tray at the bottom right (tray.lua); click that to
 * bring it back.
 *
+* Under its name, a line of tags: how it aggros and what stops that, whether it links, the element
+* it's weakest to; the arrow at its end (or /dt info) opens a few lines of details: damage
+* taken, resistance ranks, immunities, TP moves, spells and respawn (info.lua, data/info).
+*
 * Its last line is a seal timer: how long since a seal last came into your pool, how many kills
 * since, and whether one can drop yet (Phoenix allows a party one every 5 minutes); /dt seals.
 *
@@ -23,8 +27,8 @@
 
 addon.name    = 'droptables';
 addon.author  = 'Relli';
-addon.version = '0.3.1';
-addon.desc    = 'Era loot table, drop rates by treasure hunter level, and kill counts for your target.';
+addon.version = '0.4';
+addon.desc    = 'Era loot table, drop rates by treasure hunter level, kill counts, and how your target aggros and what it resists.';
 addon.link    = 'https://github.com/relliko/droptables';
 
 require('common');
@@ -32,6 +36,7 @@ local chat     = require('chat');
 local imgui    = require('imgui');
 local settings = require('settings');
 local loot     = require('loot');
+local info     = require('info');
 local kills    = require('kills');
 local keys     = require('keys');
 local tray     = require('tray');
@@ -46,6 +51,7 @@ local defaults = T{
     lifetime = T{ },   -- kills and drops (kills.lua)
     minimized = false, -- shown as an icon at the bottom right (tray.lua) instead
     seals    = true,   -- the seal timer line
+    details  = false,  -- the mob's details (detection, resists, TP moves, spells) under its chip line
     seal     = T{ at = 0, item = 0, mob = '', zone = 0, kills = 0, n = 0 },  -- the last seal (kills.lua)
 };
 
@@ -217,6 +223,232 @@ local function span(sec)
     return ('%dd %dh'):fmt(math.floor(sec / 86400), math.floor(sec / 3600) % 24);
 end
 
+--[[
+* A small framed label on the current line; its tooltip when hovered. Follow with imgui.SameLine()
+* for the next one.
+--]]
+local function chip(text, color, tip)
+    local fs = imgui.GetFontSize();
+    local x, y = imgui.GetCursorScreenPos();
+    local w = imgui.CalcTextSize(text);
+    imgui.Dummy({ 3, fs });
+    imgui.SameLine(0, 0);
+    imgui.TextColored(color, text);
+    imgui.SameLine(0, 0);
+    imgui.Dummy({ 3, fs });
+    imgui.GetWindowDrawList():AddRect({ x, y - 1 }, { x + w + 6, y + fs + 1 },
+        imgui.GetColorU32({ color[1], color[2], color[3], 0.45 }), 3);
+    if (tip ~= nil and imgui.IsItemHovered()) then
+        imgui.SetTooltip(tip);
+    end
+end
+
+local function title_case(s)
+    return (s:gsub('_', ' '):gsub('(%a)(%w*)', function (a, b) return a:upper() .. b; end));
+end
+
+-- What each way of detecting you is called on the aggro tag.
+local SENSES = { { 'sight', 'sight' }, { 'hearing', 'sound' }, { 'magic', 'magic' }, { 'lowhp', 'low HP' }, { 'ability', 'JA/WS' } };
+
+--[[
+* The line under the name: does it aggro and by what, what keeps you safe from it, whether it
+* links, what it's weak to, and the arrow that opens the details.
+--]]
+local function chip_line(t)
+    local tip = table.concat(info.detection_lines(t), '\n');
+    if (t.aggro and not t.noaggro) then
+        local senses = { };
+        for _, s in ipairs(SENSES) do
+            if (info.detects(t, s[1])) then senses[#senses + 1] = s[2]; end
+        end
+        if (t.ambush) then senses[#senses + 1] = 'ambush'; end
+        if (info.detects(t, 'scent')) then senses[#senses + 1] = 'scent'; end
+        chip(#senses > 0 and ('aggro: ' .. table.concat(senses, ', ')) or 'aggro', RED, tip);
+        -- What to cast to walk past it.
+        if (t.truesight) then
+            imgui.SameLine();
+            chip('true sight', RED, 'Sneak and Invisible don\'t work on it');
+        else
+            local need = { };
+            if (info.detects(t, 'sight')) then need[#need + 1] = 'Invis'; end
+            if (info.detects(t, 'hearing') or t.ambush) then need[#need + 1] = 'Sneak'; end
+            if (#need > 0) then
+                imgui.SameLine();
+                chip(table.concat(need, '+'), GOLD, 'What keeps it from noticing you');
+            end
+        end
+    else
+        chip('passive', DIM, tip);
+    end
+    if (t.link) then
+        imgui.SameLine();
+        chip('links', GOLD, 'Links with nearby mobs of its kind');
+    end
+    local weak = info.weak_elements(t);
+    if (#weak > 0) then
+        local names = { };
+        for _, e in ipairs(weak) do names[#names + 1] = info.ELEMENT_LABELS[e]:lower(); end
+        imgui.SameLine();
+        chip('weak: ' .. table.concat(names, ', '), GREEN, 'Its lowest element resistance rank');
+    end
+    if (info.immune(t, 'light_sleep') or info.immune(t, 'dark_sleep')) then
+        imgui.SameLine();
+        chip('no sleep', GOLD, 'Immune to sleep');
+    end
+
+    -- The arrow that opens or closes the details.
+    local fs = imgui.GetFontSize();
+    imgui.SameLine();
+    local bx, by = imgui.GetCursorScreenPos();
+    if (imgui.InvisibleButton('##dt_details', { fs, fs })) then
+        dt.settings.details = not dt.settings.details;
+        dt.moved = true; -- saved with the frame's spot
+    end
+    local hot = imgui.IsItemHovered();
+    if (hot) then
+        imgui.SetTooltip(dt.settings.details and 'Hide the details (/dt info)' or 'Resists, TP moves, spells and respawn (/dt info)');
+    end
+    local col = imgui.GetColorU32(hot and WHITE or DIM);
+    local dl, cx, cy, e = imgui.GetWindowDrawList(), bx + fs / 2, by + fs / 2, fs * 0.22;
+    if (dt.settings.details) then
+        dl:AddLine({ cx - e, cy - e / 2 }, { cx, cy + e / 2 }, col, 1.5);
+        dl:AddLine({ cx, cy + e / 2 }, { cx + e, cy - e / 2 }, col, 1.5);
+    else
+        dl:AddLine({ cx - e / 2, cy - e }, { cx + e / 2, cy }, col, 1.5);
+        dl:AddLine({ cx + e / 2, cy }, { cx - e / 2, cy + e }, col, 1.5);
+    end
+end
+
+local function rank_color(r)
+    return r < 0 and RED or (r > 0 and GREEN or DIM);
+end
+
+local function signed(r)
+    return r > 0 and ('+%d'):fmt(r) or tostring(r);
+end
+
+local RANK_TIP = 'Resistance ranks: below 0 is easier to land and to hurt with, 0 is none, 1 and up resists (8+ very hard to land).';
+
+--[[
+* One line of resistance ranks, compact: the ones that differ from the most common rank by name,
+* then 'rest' for that common rank ('all' when they're all the same; left out when it's 0).
+--]]
+local function rank_line(label, keys, labels, ranks)
+    local count, mode = { }, 0;
+    for _, k in ipairs(keys) do
+        local r = ranks[k] or 0;
+        count[r] = (count[r] or 0) + 1;
+    end
+    for r, n in pairs(count) do
+        if (n > (count[mode] or 0) or (n == count[mode] and r < mode)) then mode = r; end
+    end
+    imgui.TextColored(DIM, label);
+    local parts = 0;
+    for _, k in ipairs(keys) do
+        local r = ranks[k] or 0;
+        if (r ~= mode) then
+            imgui.SameLine();
+            imgui.TextColored(rank_color(r), ('%s %s'):fmt(labels[k], signed(r)));
+            if (imgui.IsItemHovered()) then imgui.SetTooltip(RANK_TIP); end
+            parts = parts + 1;
+        end
+    end
+    if (mode ~= 0 or parts == 0) then
+        imgui.SameLine();
+        imgui.TextColored(rank_color(mode), parts == 0 and (mode == 0 and 'none' or ('all ' .. signed(mode))) or ('rest ' .. signed(mode)));
+        if (imgui.IsItemHovered()) then imgui.SetTooltip(RANK_TIP); end
+    end
+end
+
+local LIST_MAX = 5; -- TP moves or spells shown before '+N more' (all of them in its tooltip)
+
+local function list_line(label, items)
+    imgui.TextColored(DIM, label);
+    imgui.SameLine();
+    if (#items <= LIST_MAX) then
+        imgui.TextWrapped(table.concat(items, ', '));
+        return;
+    end
+    local shown = { };
+    for i = 1, LIST_MAX do shown[i] = items[i]; end
+    imgui.TextWrapped(('%s +%d more'):fmt(table.concat(shown, ', '), #items - LIST_MAX));
+    if (imgui.IsItemHovered()) then imgui.SetTooltip(table.concat(items, '\n')); end
+end
+
+local WRAP = 300; -- pixels, for the details' long lines
+local ELEMENT_SHORT = { fire = 'fire', ice = 'ice', wind = 'wind', earth = 'earth', thunder = 'thunder', water = 'water', light = 'light', dark = 'dark' };
+
+--[[
+* The details, a few lines: damage taken, element and status ranks with immunities, TP moves,
+* spells, and the rest. How it detects you is in the aggro tag's tooltip.
+--]]
+local function details(t, spawn)
+    imgui.PushTextWrapPos(imgui.GetCursorPosX() + WRAP);
+
+    -- Damage taken, grouped by percentage: 'takes 50% slash, pierce · 25% blunt, h2h'.
+    local groups, order = { }, { };
+    for _, p in ipairs(info.PHYSICAL) do
+        local v = (t.phys or { })[p[1]];
+        if (v ~= nil) then
+            if (groups[v] == nil) then groups[v] = { }; order[#order + 1] = v; end
+            groups[v][#groups[v] + 1] = p[2]:lower();
+        end
+    end
+    local parts = { };
+    for _, v in ipairs(order) do parts[#parts + 1] = ('%d%% %s'):fmt(v, table.concat(groups[v], ', ')); end
+    local mdmg = t.mdmg or { };
+    if (mdmg.all ~= nil) then parts[#parts + 1] = ('%d%% magic'):fmt(mdmg.all); end
+    for _, e in ipairs(info.ELEMENTS) do
+        if (mdmg[e] ~= nil) then parts[#parts + 1] = ('%d%% %s'):fmt(mdmg[e], e); end
+    end
+    if (#parts > 0) then
+        imgui.TextColored(DIM, 'Takes');
+        imgui.SameLine();
+        imgui.TextWrapped(table.concat(parts, ' · '));
+    end
+
+    rank_line('Elements', info.ELEMENTS, ELEMENT_SHORT, t.el or { });
+    rank_line('Status', info.STATUSES, info.STATUS_LABELS, t.st or { });
+    if (#(t.immune or { }) > 0) then
+        local immune = { };
+        for _, s in ipairs(t.immune) do immune[#immune + 1] = (info.STATUS_LABELS[s] or s:gsub('_', ' ')); end
+        imgui.TextColored(DIM, 'Immune');
+        imgui.SameLine();
+        imgui.PushStyleColor(ImGuiCol_Text, GOLD);
+        imgui.TextWrapped(table.concat(immune, ', '));
+        imgui.PopStyleColor(1);
+    end
+
+    local tp = { };
+    for _, m in ipairs(t.tp or { }) do
+        tp[#tp + 1] = m[2] == 4 and (m[1] .. ' (cone)') or (m[2] ~= 0 and (m[1] .. ' (AoE)') or m[1]);
+    end
+    if (#tp > 0) then list_line('TP', tp); end
+    local spells = { };
+    local res = AshitaCore:GetResourceManager();
+    for _, id in ipairs(info.spells(t, spawn.lv)) do
+        local s = res:GetSpellById(id);
+        local name = s ~= nil and s.Name ~= nil and s.Name[1] or '';
+        spells[#spells + 1] = name ~= '' and name or ('Spell %d'):fmt(id);
+    end
+    if (#spells > 0) then list_line('Spells', spells); end
+
+    local rest = { };
+    if (t.jobs ~= nil and #t.jobs == 2) then rest[#rest + 1] = ('%s/%s'):fmt(t.jobs[1]:upper(), t.jobs[2]:upper()); end
+    if (t.family ~= nil) then rest[#rest + 1] = title_case(t.family); end
+    if ((t.element or '') ~= '') then rest[#rest + 1] = t.element; end
+    if (t.charm) then rest[#rest + 1] = 'charmable'; end
+    local respawn = spawn.r or info.get(t, 'respawn');
+    if (respawn > 0) then rest[#rest + 1] = info.duration(respawn) .. ' respawn'; end
+    if (t.window ~= nil) then rest[#rest + 1] = ('spawns %d:00-%d:00'):fmt(t.window[1], t.window[2]); end
+    if (t.script) then rest[#rest + 1] = 'script changes some'; end
+    imgui.TextColored(DIM, table.concat(rest, ' · '));
+    if (t.script and imgui.IsItemHovered()) then
+        imgui.SetTooltip('Its script changes some of this when it spawns');
+    end
+    imgui.PopTextWrapPos();
+end
+
 -- What the seal timer knows, as lines (the line's tooltip, and /dt seals).
 local function seal_lines()
     local seal = dt.settings.seal;
@@ -296,6 +528,7 @@ local function draw()
     end
 
     local mob, zone, tpl, z = loot.mob(id);
+    local spawn, mi = info.mob(id);
     local you, why = your_th();
     local cols = loot.columns(you);
     local you_col = you >= 4 and 5 or you + 1;
@@ -316,11 +549,12 @@ local function draw()
         local sk, lk = kills.get(kills.zone(), name);
         local session_kills, lifetime_kills = sk and sk.n or 0, lk and lk.n or 0;
         imgui.TextColored(WHITE, name);
-        if (mob ~= nil and mob.lv ~= nil) then
+        local lv = (mob ~= nil and mob.lv) or (spawn ~= nil and spawn.lv);
+        if (lv) then
             imgui.SameLine();
-            imgui.TextColored(DIM, mob.lv[1] == mob.lv[2] and ('Lv %d'):fmt(mob.lv[1]) or ('Lv %d-%d'):fmt(mob.lv[1], mob.lv[2]));
+            imgui.TextColored(DIM, lv[1] == lv[2] and ('Lv %d'):fmt(lv[1]) or ('Lv %d-%d'):fmt(lv[1], lv[2]));
         end
-        if (tpl ~= nil and tpl.nm) then
+        if ((tpl ~= nil and tpl.nm) or (mi ~= nil and mi.nm)) then
             imgui.SameLine();
             imgui.TextColored(RED, 'NM');
         end
@@ -343,6 +577,14 @@ local function draw()
         end
         local e, cy = fs * 0.5 * 0.7071 - 1, by + fs / 2;
         dl:AddLine({ bx + fs / 2 - e, cy }, { bx + fs / 2 + e, cy }, math.floor((hot and 0xFF or 0xB0) * alpha) * 0x1000000 + 0xFFFFFF, 1.5);
+
+        -- How it aggros, links and what it's weak to; the details under that when opened.
+        if (mi ~= nil) then
+            chip_line(mi);
+            if (s.details) then
+                details(mi, spawn);
+            end
+        end
 
         if (tpl == nil) then
             imgui.TextColored(DIM, 'No era loot data');
@@ -417,7 +659,7 @@ local function draw()
             end
         end
         if (s.seals ~= false) then
-            seal_line(tpl ~= nil and tpl.nm);
+            seal_line((tpl ~= nil and tpl.nm) or (mi ~= nil and mi.nm));
         end
 
         local x, y = imgui.GetWindowPos();
@@ -438,6 +680,7 @@ local function help()
     msg('/dt show always|fade|hold   keep the frame up (always), fade it out after you target a mob, or show it only while you hold a key');
     msg('/dt fade [seconds]   fade it out that long after you target a mob (6 s to start with)');
     msg('/dt key <key>   the key for hold (shift to start with; ctrl, alt, a-z, 0-9, f1-f12)');
+    msg('/dt info [on|off]   the details under the tag line: resists, TP moves, spells, respawn (so does the arrow at the end of that line)');
     msg('/dt kills   kills in this zone, this session and lifetime');
     msg('/dt seals [on|off]   the seal timer: since the last seal, kills since, and whether one can drop yet (on|off: its line in the frame)');
     msg('/dt reset session   clear this session\'s counts; /dt reset moves the frame back');
@@ -486,6 +729,9 @@ local function print_debug()
     if (tpl ~= nil) then
         msg(('%d drop rolls, %d steal%s'):fmt(#tpl.drops, #tpl.steal, tpl.script and ', scripted loot' or ''));
     end
+    local spawn, mi = info.mob(id);
+    msg(spawn ~= nil and ('Info: template %s, %s'):fmt(spawn.t, mi ~= nil and (mi.family or '?') or 'no info')
+        or ('Info: none (data/info/%d.lua %s)'):fmt(zone, info.zone(zone) and 'has no such mob' or 'missing'));
 end
 
 ashita.events.register('load', 'droptables_load', function ()
@@ -499,6 +745,7 @@ ashita.events.register('load', 'droptables_load', function ()
     end
     dt.last_save = kills.now();
     tray.init('droptables');
+    info.init(addon.path);
     if (not loot.init(addon.path)) then
         err(('No loot data (%s). Run tools/gen_loot.py.'):fmt(tostring(loot.error)));
     end
@@ -583,6 +830,17 @@ ashita.events.register('command', 'droptables_command', function (e)
             return;
         end
         msg(describe_show());
+    elseif (what == 'info' or what == 'details') then
+        if (value == 'on' or value == 'off') then
+            s.details = value == 'on';
+        elseif (value == '') then
+            s.details = not s.details;
+        else
+            err('Use /dt info, or /dt info on or off.');
+            return;
+        end
+        save();
+        msg(('Mob details %s.'):fmt(s.details and 'shown' or 'hidden'));
     elseif (what == 'kills') then
         print_kills();
     elseif (what == 'seals' or what == 'seal') then
